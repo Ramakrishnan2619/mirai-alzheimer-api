@@ -141,9 +141,10 @@ for candidate in frontend_candidates:
 
 if frontend_path:
     print(f"✓ Serving frontend from: {frontend_path}")
-    # Mount at a subpath to avoid overriding API routes
-    app.mount("/static", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
+    # Mount at root - FastAPI routes take priority over static files
+    app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
 else:
     print(f"⚠ Frontend directory not found. Candidates checked: {frontend_candidates}")
     print("  API-only mode: Frontend must be deployed separately or accessed via /docs")
+
 
