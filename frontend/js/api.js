@@ -3,10 +3,10 @@
  * Handles all API communication with the backend
  */
 
-// Auto-detect environment: use localhost for dev, render URL for production
+// Auto-detect environment: use localhost for dev, relative path for production
 const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://localhost:8000/api'
-    : 'https://mirai-backend.onrender.com/api';
+    : '/api'; // Relative path for production (served by same origin)
 
 // Session management
 const session = {
