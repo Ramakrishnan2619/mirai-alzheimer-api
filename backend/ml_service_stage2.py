@@ -13,16 +13,16 @@ import xgboost as xgb
 # Path to model artifacts
 MODELS_DIR = Path(__file__).parent / "models"
 
-# Stage-2 uses 2 features for genetic risk
+# Stage-2 uses 2 features for genetic risk (Cascade Model)
 STAGE2_FEATURES = [
-    "APOE_e4_count",        # 0, 1, or 2 copies of APOE ε4 allele
-    "polygenic_risk_score"  # Polygenic risk score (continuous)
+    "Stage1_Prob",          # Probability from Stage 1 Clinical Model
+    "APOE4_Count"           # 0, 1, or 2 copies of APOE ε4 allele
 ]
 
 # Feature labels for explanation
 STAGE2_FEATURE_LABELS = {
-    "APOE_e4_count": "APOE ε4 Allele Count",
-    "polygenic_risk_score": "Polygenic Risk Score (PRS)"
+    "Stage1_Prob": "Clinical Risk Score (Stage 1)",
+    "APOE4_Count": "APOE ε4 Allele Count"
 }
 
 
@@ -79,22 +79,26 @@ class Stage2MLService:
         Convert genetic inputs to feature vector
         
         Args:
-            inputs: Dict with APOE_e4_count and polygenic_risk_score
+            inputs: Dict with Stage1_Prob and APOE4_Count
             
         Returns:
-            numpy array of features [APOE_e4_count, polygenic_risk_score]
+            numpy array of features [Stage1_Prob, APOE4_Count]
         """
         features = []
         
-        for feature_name in STAGE2_FEATURES:
-            if feature_name in inputs and inputs[feature_name] is not None:
-                try:
-                    features.append(float(inputs[feature_name]))
-                except (ValueError, TypeError):
-                    features.append(np.nan)
-            else:
-                # Missing value - will be handled by imputer
-                features.append(np.nan)
+        # 1. Stage1_Prob
+        s1_prob = inputs.get("Stage1_Prob")
+        if s1_prob is not None:
+            features.append(float(s1_prob))
+        else:
+            features.append(np.nan)
+            
+        # 2. APOE4_Count
+        apoe = inputs.get("APOE4_Count")
+        if apoe is not None:
+            features.append(float(apoe))
+        else:
+            features.append(np.nan)
         
         return np.array(features).reshape(1, -1)
     
@@ -136,30 +140,30 @@ class Stage2MLService:
             risk_category = "high"
         
         # Feature contribution analysis
+        # Feature contribution analysis
         feature_analysis = []
-        apoe_count = inputs.get("APOE_e4_count", 0)
-        prs = inputs.get("polygenic_risk_score")
+        apoe_count = inputs.get("APOE4_Count", 0)
+        s1_prob = inputs.get("Stage1_Prob", 0.0)
         
         # APOE ε4 contribution
         apoe_risk_level = "low" if apoe_count == 0 else ("moderate" if apoe_count == 1 else "high")
         feature_analysis.append({
-            "feature": "APOE_e4_count",
+            "feature": "APOE4_Count",
             "label": "APOE ε4 Allele Count",
             "value": apoe_count,
             "description": f"{apoe_count} cop{'y' if apoe_count == 1 else 'ies'} of ε4 allele",
             "risk_level": apoe_risk_level
         })
         
-        # PRS contribution
-        if prs is not None:
-            prs_risk_level = "low" if prs < 0.3 else ("moderate" if prs < 0.7 else "high")
-            feature_analysis.append({
-                "feature": "polygenic_risk_score",
-                "label": "Polygenic Risk Score",
-                "value": round(prs, 3),
-                "description": f"PRS: {prs:.3f}",
-                "risk_level": prs_risk_level
-            })
+        # Stage 1 Risk contribution
+        s1_risk_level = "low" if s1_prob < 0.3 else ("moderate" if s1_prob < 0.6 else "high")
+        feature_analysis.append({
+            "feature": "Stage1_Prob",
+            "label": "Stage 1 Clinical Risk",
+            "value": round(s1_prob, 3),
+            "description": f"Clinical Probability: {s1_prob:.3f}",
+            "risk_level": s1_risk_level
+        })
         
         return {
             "probability": round(probability, 4),

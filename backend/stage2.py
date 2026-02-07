@@ -145,6 +145,18 @@ def submit_genetic_data(request: Stage2SubmitRequest, db: Session = Depends(get_
             detail="Stage-2 already submitted for this assessment"
         )
     
+    # Get Stage-1 risk score (REQUIRED for Stage-2 Cascade Model)
+    stage1_risk = db.query(RiskScore).filter(
+        RiskScore.assessment_id == request.assessment_id,
+        RiskScore.stage == 1
+    ).first()
+    
+    if not stage1_risk:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Stage-1 results not found. Stage-2 depends on Stage-1 results."
+        )
+    
     # Run ML inference
     ml_service = get_stage2_ml_service()
     if not ml_service.is_loaded:
@@ -153,25 +165,19 @@ def submit_genetic_data(request: Stage2SubmitRequest, db: Session = Depends(get_
             detail="Stage-2 ML service not available"
         )
     
+    # Inputs for Stage-2 Model (Cascade: Stage1_Prob + Genetics)
     inputs = {
-        "APOE_e4_count": request.apoe_e4_count,
-        "polygenic_risk_score": request.polygenic_risk_score
+        "Stage1_Prob": stage1_risk.probability,
+        "APOE4_Count": request.apoe_e4_count
     }
     
     result = ml_service.predict_risk(inputs)
     
-    # Get Stage-1 risk score for combined calculation
-    stage1_risk = db.query(RiskScore).filter(
-        RiskScore.assessment_id == request.assessment_id,
-        RiskScore.stage == 1
-    ).first()
-    
-    combined = None
-    if stage1_risk:
-        combined = calculate_combined_risk(
-            stage1_risk.probability, 
-            result["probability"]
-        )
+    # Calculate combined risk (Weighted fusion for final output)
+    combined = calculate_combined_risk(
+        stage1_risk.probability, 
+        result["probability"]
+    )
     
     # Store Stage-2 data
     stage2_data = Stage2Data(

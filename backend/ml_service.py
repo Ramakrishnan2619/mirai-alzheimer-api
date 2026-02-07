@@ -16,12 +16,12 @@ MODELS_DIR = Path(__file__).parent / "models"
 # Feature order expected by the XGBoost model (6 features based on model structure)
 # These map to questionnaire responses that get aggregated into model features
 FEATURE_ORDER = [
-    "cognitive_score",      # Aggregated from memory/cognition questions
-    "functional_score",     # Aggregated from ADL questions
-    "age_normalized",       # Age normalized
-    "family_risk_score",    # Family history risk
-    "cardiovascular_score", # CV risk factors
-    "lifestyle_score"       # Lifestyle factors
+    "AGE",
+    "PTGENDER",
+    "PTEDUCAT",
+    "FAQ",
+    "EcogPtMem",
+    "EcogPtTotal"
 ]
 
 # Questionnaire questions that map to each model feature
@@ -136,84 +136,87 @@ class MLService:
     
     def _aggregate_to_model_features(self, responses: Dict[str, Any]) -> np.ndarray:
         """
-        Aggregate questionnaire responses into the 6 model features
+        Aggregate questionnaire responses into the 6 features expected by the new XGBoost model:
+        ['AGE', 'PTGENDER', 'PTEDUCAT', 'FAQ', 'EcogPtMem', 'EcogPtTotal']
         """
         features = []
         
-        # Cognitive score: average of cognitive questions (0-1 scale)
-        cognitive_questions = QUESTION_TO_FEATURE_MAP["cognitive_score"]
-        cognitive_values = []
-        for q in cognitive_questions:
+        # 1. AGE (Numeric)
+        try:
+            age = float(responses.get("age", 65))
+        except (ValueError, TypeError):
+            age = 65.0
+        features.append(age)
+        
+        # 2. PTGENDER (Male=1, Female=0)
+        sex_str = str(responses.get("sex", "Female")).lower()
+        sex_val = 1.0 if sex_str in ["male", "m", "1"] else 0.0
+        features.append(sex_val)
+        
+        # 3. PTEDUCAT (Education Years)
+        try:
+            edu = float(responses.get("education_years", 12))
+        except (ValueError, TypeError):
+            edu = 12.0
+        features.append(edu)
+        
+        # 4. FAQ (Functional Activities Questionnaire) - Sum of ADL/IADL difficulties
+        # We approximate specific questions to FAQ items (usually 0-3 scale, here mapped from inputs)
+        faq_score = 0.0
+        
+        # Map specific inputs to FAQ-like score (0=Normal, >0=Impaired)
+        # Using 0-3 scale approximation: 0=None, 1=Some, 2=A lot, 3=Dependent
+        if "adl_assistance" in responses: # 0, 1, 2 -> Map to 0, 5, 10 weight? 
+            # adl_assistance is usually 0=No, 1=Yes/Sometimes, 2=Yes/Always
+            val = float(responses["adl_assistance"])
+            faq_score += val * 5.0 # Weight heavily as it implies dependency
+            
+        if "financial_difficulty" in responses:
+            faq_score += float(responses["financial_difficulty"]) * 2.0
+            
+        if "navigation_difficulty" in responses:
+            faq_score += float(responses["navigation_difficulty"]) * 2.0
+            
+        if "shopping_difficulty" in responses: # If present
+            faq_score += float(responses["shopping_difficulty"]) * 2.0
+            
+        features.append(faq_score)
+        
+        # 5. EcogPtMem (Everyday Cognition - Memory) - Average of memory items (1-4 scale)
+        # Questions: appointment_memory, daily_memory_problems, repetition_issues, temporal_disorientation
+        mem_items = ["appointment_memory", "daily_memory_problems", "repetition_issues", "temporal_disorientation"]
+        mem_values = []
+        for q in mem_items:
             if q in responses:
                 try:
-                    cognitive_values.append(float(responses[q]))
+                    # Inputs are usually 0=No, 1=Yes. We map to 1-4 scale?
+                    # Or just use raw sums if model used raw sums?
+                    # The prompt says EcogPtMem is "Score". Usually 1 (Better) to 4 (Worse).
+                    # If input is 0/1 binary: 0->1(Normal), 1->3(Concern).
+                    val = float(responses[q])
+                    mem_values.append(1.0 + (val * 2.0)) # Map 0->1, 1->3
                 except (ValueError, TypeError):
                     pass
-        cognitive_score = np.mean(cognitive_values) if cognitive_values else 0.0
-        features.append(cognitive_score)
         
-        # Functional score: average of ADL questions (0-2 scale normalized to 0-1)
-        functional_questions = QUESTION_TO_FEATURE_MAP["functional_score"]
-        functional_values = []
-        for q in functional_questions:
+        # Default to 1.0 (Normal) if no inputs
+        ecog_mem = np.mean(mem_values) if mem_values else 1.0
+        features.append(ecog_mem)
+        
+        # 6. EcogPtTotal (Everyday Cognition - Total) - Average of ALL cognitive items
+        # Include Memory items + judgment, interest, learning
+        other_items = ["judgment_problems", "reduced_interest", "learning_difficulty"]
+        all_values = list(mem_values) # Start with memory values
+        
+        for q in other_items:
             if q in responses:
                 try:
                     val = float(responses[q])
-                    # Normalize adl_assistance from 0-2 to 0-1
-                    if q == "adl_assistance":
-                        val = val / 2.0
-                    functional_values.append(val)
+                    all_values.append(1.0 + (val * 2.0)) # Map 0->1, 1->3
                 except (ValueError, TypeError):
                     pass
-        functional_score = np.mean(functional_values) if functional_values else 0.0
-        features.append(functional_score)
-        
-        # Age normalized (40-100 -> 0-1)
-        age = float(responses.get("age", 65))
-        age_normalized = (age - 40) / 60.0
-        age_normalized = max(0.0, min(1.0, age_normalized))
-        features.append(age_normalized)
-        
-        # Family risk score
-        family_history = float(responses.get("family_history_dementia", 0))
-        family_degree = float(responses.get("family_relation_degree", 0)) / 2.0  # 0-2 -> 0-1
-        family_risk = (family_history * 0.6 + family_degree * 0.4)
-        features.append(family_risk)
-        
-        # Cardiovascular score
-        cv_questions = QUESTION_TO_FEATURE_MAP["cardiovascular_score"]
-        cv_values = []
-        for q in cv_questions:
-            if q in responses:
-                try:
-                    cv_values.append(float(responses[q]))
-                except (ValueError, TypeError):
-                    pass
-        cv_score = np.mean(cv_values) if cv_values else 0.0
-        features.append(cv_score)
-        
-        # Lifestyle score (higher physical activity = lower risk, so invert some)
-        lifestyle_values = []
-        if "physical_activity" in responses:
-            # Invert: 0=sedentary(high risk) -> 1, 3=active(low risk) -> 0
-            pa = float(responses["physical_activity"])
-            lifestyle_values.append(1.0 - (pa / 3.0))
-        if "smoking_status" in responses:
-            # 0=never, 1=former, 2=current -> normalize
-            smoke = float(responses["smoking_status"]) / 2.0
-            lifestyle_values.append(smoke)
-        if "sleep_hours" in responses:
-            # Optimal 7-8 hours, risk increases with deviation
-            sleep = float(responses["sleep_hours"])
-            sleep_risk = abs(sleep - 7.5) / 5.0  # Deviation from optimal
-            lifestyle_values.append(min(1.0, sleep_risk))
-        if "depression" in responses:
-            lifestyle_values.append(float(responses["depression"]))
-        if "head_injury" in responses:
-            lifestyle_values.append(float(responses["head_injury"]))
-        
-        lifestyle_score = np.mean(lifestyle_values) if lifestyle_values else 0.0
-        features.append(lifestyle_score)
+                    
+        ecog_total = np.mean(all_values) if all_values else 1.0
+        features.append(ecog_total)
         
         return np.array(features).reshape(1, -1)
     
