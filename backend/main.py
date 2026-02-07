@@ -90,26 +90,60 @@ app.include_router(stage2_router)
 app.include_router(stage3_router)
 
 
-# Serve frontend static files
-from fastapi.staticfiles import StaticFiles
-from pathlib import Path
-
-# Path to frontend directory (sibling to backend)
-frontend_path = Path(__file__).parent.parent / "frontend"
-
-if frontend_path.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
-else:
-    print(f"⚠ Frontend directory not found at {frontend_path}")
-
-
-
+# Health check endpoint - MUST be before static mount
 @app.get("/health")
 def health_check():
     """Health check endpoint"""
     ml_service = get_ml_service()
+    stage2_ml = get_stage2_ml_service()
+    stage3_ml = get_stage3_ml_service()
     return {
         "status": "healthy",
-        "ml_service": "ready" if ml_service.is_loaded else "not_loaded",
+        "stage1_ml": "ready" if ml_service.is_loaded else "not_loaded",
+        "stage2_ml": "ready" if stage2_ml.is_loaded else "not_loaded",
+        "stage3_ml": "ready" if stage3_ml.is_loaded else "not_loaded",
         "database": "connected"
     }
+
+
+# Root index route - fallback when frontend isn't served
+@app.get("/")
+def read_root():
+    """Root endpoint - returns API info or serves frontend"""
+    return {
+        "name": "MirAI API",
+        "version": "1.0.0",
+        "description": "Early Alzheimer's Disease Risk Assessment Platform",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+
+# Serve frontend static files
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+import os
+
+# Path to frontend directory - check multiple possible locations
+# On Render: /opt/render/project/src/frontend (when rootDir is repo root)
+# Local: ../frontend (relative to backend/)
+frontend_candidates = [
+    Path(__file__).parent.parent / "frontend",  # Local dev
+    Path("/opt/render/project/src/frontend"),    # Render with repo root
+    Path(os.getcwd()).parent / "frontend",       # Alternate local
+]
+
+frontend_path = None
+for candidate in frontend_candidates:
+    if candidate.exists():
+        frontend_path = candidate
+        break
+
+if frontend_path:
+    print(f"✓ Serving frontend from: {frontend_path}")
+    # Mount at a subpath to avoid overriding API routes
+    app.mount("/static", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
+else:
+    print(f"⚠ Frontend directory not found. Candidates checked: {frontend_candidates}")
+    print("  API-only mode: Frontend must be deployed separately or accessed via /docs")
+

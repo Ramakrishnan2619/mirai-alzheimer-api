@@ -1,5 +1,5 @@
 # Render.com Deployment Configuration
-# Single service: Backend serves both API and static frontend
+# Deploy from repo root to include both backend and frontend
 
 services:
   - type: web
@@ -7,11 +7,14 @@ services:
     runtime: python
     region: oregon
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
+    # Build from repo root, but install backend requirements
+    buildCommand: pip install -r backend/requirements.txt
+    # Run from backend directory
+    startCommand: cd backend && gunicorn main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
         value: "3.10.0"
-    rootDir: backend
+    # Use repo root (not backend/) so frontend is accessible
+    # rootDir defaults to repo root when not specified
     autoDeploy: true
     healthCheckPath: /health
