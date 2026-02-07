@@ -4,9 +4,10 @@
  */
 
 // Auto-detect environment: use localhost for dev, relative path for production
+// On Render.com, the backend serves frontend files, so /api works correctly
 const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://localhost:8000/api'
-    : '/api'; // Relative path for production (served by same origin)
+    : `${window.location.origin}/api`; // Use same origin for production
 
 // Session management
 const session = {

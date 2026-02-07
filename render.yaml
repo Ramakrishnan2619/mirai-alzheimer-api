@@ -1,10 +1,9 @@
 # Render.com Deployment Configuration
-# This file configures automatic deployment from GitHub
+# Single service: Backend serves both API and static frontend
 
 services:
-  # Backend API Service
   - type: web
-    name: mirai-backend
+    name: mirai-app
     runtime: python
     region: oregon
     plan: free
@@ -15,23 +14,4 @@ services:
         value: "3.10.0"
     rootDir: backend
     autoDeploy: true
-    healthCheckPath: /api/questionnaire/status
-
-  # Frontend Static Site
-  - type: web
-    name: mirai-frontend
-    runtime: static
-    region: oregon
-    plan: free
-    buildCommand: echo "No build needed"
-    staticPublishPath: .
-    rootDir: frontend
-    autoDeploy: true
-    headers:
-      - path: /*
-        name: Cache-Control
-        value: no-cache
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
+    healthCheckPath: /health
